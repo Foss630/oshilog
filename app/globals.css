@@ -1,0 +1,176 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* GBA-inspired dark color palette */
+  --background: #1A1A2E;
+  --foreground: #E8F4D4;
+  --card: #0F3460;
+  --card-foreground: #E8F4D4;
+  --popover: #0F3460;
+  --popover-foreground: #E8F4D4;
+  --primary: #7BC67E;
+  --primary-foreground: #1A1A2E;
+  --secondary: #F5A623;
+  --secondary-foreground: #1A1A2E;
+  --muted: #7A9E7E;
+  --muted-foreground: #7A9E7E;
+  --accent: #5B8DD9;
+  --accent-foreground: #1A1A2E;
+  --destructive: #FF4444;
+  --destructive-foreground: #E8F4D4;
+  --border: #F5A623;
+  --input: #2D2D44;
+  --ring: #7BC67E;
+  --chart-1: #7BC67E;
+  --chart-2: #F5A623;
+  --chart-3: #5B8DD9;
+  --chart-4: #FF6B9D;
+  --chart-5: #C084FC;
+  --radius: 0px;
+
+  /* GBA custom colors */
+  --gba-green: #7BC67E;
+  --gba-orange: #F5A623;
+  --gba-blue: #5B8DD9;
+  --gba-dark: #1A1A2E;
+  --gba-mid: #2D2D44;
+  --gba-surface: #16213E;
+  --gba-card: #0F3460;
+  --gba-text: #E8F4D4;
+  --gba-text-muted: #7A9E7E;
+}
+
+@theme inline {
+  --font-sans: var(--font-jp), 'Noto Sans JP', system-ui, sans-serif;
+  --font-pixel: var(--font-pixel), 'Press Start 2P', monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 4px;
+  --radius-xl: 4px;
+  
+  /* GBA colors for Tailwind */
+  --color-gba-green: var(--gba-green);
+  --color-gba-orange: var(--gba-orange);
+  --color-gba-blue: var(--gba-blue);
+  --color-gba-dark: var(--gba-dark);
+  --color-gba-mid: var(--gba-mid);
+  --color-gba-surface: var(--gba-surface);
+  --color-gba-card: var(--gba-card);
+  --color-gba-text: var(--gba-text);
+  --color-gba-text-muted: var(--gba-text-muted);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-gba-dark text-gba-text;
+  }
+}
+
+/* Scanline overlay effect */
+.scanlines {
+  position: relative;
+}
+.scanlines::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.15) 0px,
+    rgba(0, 0, 0, 0.15) 1px,
+    transparent 1px,
+    transparent 2px
+  );
+  pointer-events: none;
+}
+
+/* Pixel grid pattern */
+.pixel-grid {
+  background-image: 
+    linear-gradient(rgba(123, 198, 126, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(123, 198, 126, 0.03) 1px, transparent 1px);
+  background-size: 8px 8px;
+}
+
+/* GBA glow effect */
+.gba-glow {
+  text-shadow: 0 0 8px rgba(123, 198, 126, 0.4);
+}
+
+/* Hard pixel shadow */
+.pixel-shadow {
+  box-shadow: 4px 4px 0 #000;
+}
+
+.pixel-shadow-sm {
+  box-shadow: 2px 2px 0 #000;
+}
+
+/* Button press effect */
+.pixel-btn {
+  box-shadow: 4px 4px 0 #000;
+  transition: transform 0.05s, box-shadow 0.05s;
+}
+.pixel-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 0 #000;
+}
+
+/* Blinking animation for LIVE indicator */
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+.animate-blink {
+  animation: blink 1s infinite;
+}
+
+/* Pixel bar fill animation */
+@keyframes pixel-fill {
+  from { width: 0; }
+}
+
+.animate-pixel-fill {
+  animation: pixel-fill 1s ease-out forwards;
+}
+
+/* Star blink for event alerts */
+@keyframes star-blink {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.2); }
+}
+
+.animate-star {
+  animation: star-blink 0.5s infinite;
+}
