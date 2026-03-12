@@ -90,12 +90,14 @@ function PixelButton({
   variant = "primary",
   onClick,
   disabled = false,
+  type = "button",
 }: {
   children: React.ReactNode
   className?: string
   variant?: "primary" | "secondary" | "ghost"
   onClick?: () => void
   disabled?: boolean
+  type?: "button" | "submit" | "reset"
 }) {
   const variants = {
     primary: "bg-gba-orange text-gba-dark border-2 border-black",
@@ -105,7 +107,7 @@ function PixelButton({
   
   return (
     <button
-      type="button"
+      type={type}
       onClick={onClick}
       disabled={disabled}
       className={`
@@ -382,32 +384,72 @@ export default function Oshilog() {
   }, [user])
 
   const handleAuthSubmit = async (mode: "signIn" | "signUp") => {
+    console.log("=== AUTH SUBMIT START ===")
+    console.log("mode:", mode)
+    console.log("email:", email)
+    console.log("password length:", password.length)
+    
     try {
       setAuthSubmitting(true)
       setAuthError(null)
 
       if (!email || !password) {
+        console.error("ERROR: Missing email or password")
         setAuthError("EMAIL & PASSWORD REQUIRED")
         return
       }
 
       if (mode === "signIn") {
-        const { error } = await supabase.auth.signInWithPassword({
+        console.log("Attempting sign in...")
+        const { data, error } = await supabase.auth.signInWithPassword({
           email,
           password,
         })
+        console.log("Sign in response:", { data, error })
         if (error) throw error
+        console.log("Sign in successful!")
       } else {
-        const { error } = await supabase.auth.signUp({
+        console.log("Attempting sign up...")
+        const { data, error } = await supabase.auth.signUp({
           email,
           password,
+          options: {
+            emailRedirectTo: undefined,
+            data: {
+              // Add any additional user data here
+            }
+          }
         })
-        if (error) throw error
+        console.log("Sign up response:", { data, error })
+        if (error) {
+          console.error("Sign up error:", error)
+          throw error
+        }
+        console.log("Sign up successful!")
+        
+        // For immediate login after signup (if email verification is disabled)
+        if (data.user && !data.session) {
+          console.log("User created but no session - attempting immediate sign in...")
+          const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+            email,
+            password,
+          })
+          console.log("Immediate sign in response:", { signInData, signInError })
+          if (signInError) {
+            console.error("Immediate sign in failed:", signInError)
+            // Don't throw error here - user was created successfully
+            setAuthError("ACCOUNT CREATED! PLEASE CHECK EMAIL OR TRY LOGIN")
+          } else {
+            console.log("Immediate sign in successful!")
+          }
+        }
       }
     } catch (err: any) {
+      console.error("Auth error:", err)
       setAuthError(err.message ?? "AUTH FAILED")
     } finally {
       setAuthSubmitting(false)
+      console.log("=== AUTH SUBMIT END ===")
     }
   }
 
@@ -1438,6 +1480,7 @@ export default function Oshilog() {
           className="space-y-3"
           onSubmit={(e) => {
             e.preventDefault()
+            console.log("=== FORM SUBMITTED ===")
             handleAuthSubmit(authMode)
           }}
         >
@@ -1487,6 +1530,8 @@ export default function Oshilog() {
             <PixelButton
               className="w-full py-2"
               variant="primary"
+              type="submit"
+              disabled={authSubmitting}
             >
               {authSubmitting
                 ? "CONNECTING..."
