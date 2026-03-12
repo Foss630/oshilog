@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from "react"
 import { Home, Users, Calendar, FileText, ChevronLeft, ChevronRight, Bell, Plus } from "lucide-react"
 import { format } from "date-fns"
+import type { User } from "@supabase/supabase-js"
 import { supabase } from "@/lib/supabase"
 
 // Types
@@ -37,6 +38,18 @@ interface StampReaction {
   count: number
   selected: boolean
 }
+
+// Color options for dropdown
+const colorOptions = [
+  { name: "SAKURA PINK", value: "#FF6B9D" },
+  { name: "LAVENDER", value: "#C084FC" },
+  { name: "AQUA", value: "#3DDBD9" },
+  { name: "GOLD", value: "#FFD93D" },
+  { name: "CORAL", value: "#FF8C42" },
+  { name: "SKY BLUE", value: "#5B8DD9" },
+  { name: "MINT GREEN", value: "#7BC67E" },
+  { name: "CRIMSON", value: "#E05252" },
+]
 
 // Stamp emojis
 const stampEmojis = ["😭", "🔥", "💖", "👏", "✨"]
@@ -76,11 +89,13 @@ function PixelButton({
   className = "",
   variant = "primary",
   onClick,
+  disabled = false,
 }: {
   children: React.ReactNode
   className?: string
   variant?: "primary" | "secondary" | "ghost"
   onClick?: () => void
+  disabled?: boolean
 }) {
   const variants = {
     primary: "bg-gba-orange text-gba-dark border-2 border-black",
@@ -90,10 +105,13 @@ function PixelButton({
   
   return (
     <button
+      type="button"
       onClick={onClick}
+      disabled={disabled}
       className={`
         px-4 py-2 font-bold uppercase pixel-btn
         ${variants[variant]}
+        ${disabled ? "opacity-50 cursor-not-allowed" : ""}
         ${className}
       `}
       style={{ fontFamily: "var(--font-pixel)", fontSize: "8px" }}
@@ -219,8 +237,64 @@ export default function Oshilog() {
   const [calendarMonth, setCalendarMonth] = useState(new Date())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [user, setUser] = useState<User | null>(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  const [authError, setAuthError] = useState<string | null>(null)
+  const [authMode, setAuthMode] = useState<"signIn" | "signUp">("signIn")
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
+  const [authSubmitting, setAuthSubmitting] = useState(false)
+  const [showAddOshiForm, setShowAddOshiForm] = useState(false)
+  const [newOshiName, setNewOshiName] = useState("")
+  const [newOshiHandle, setNewOshiHandle] = useState("")
+  const [newOshiEmoji, setNewOshiEmoji] = useState("🌙")
+  const [newOshiColor, setNewOshiColor] = useState("#FF6B9D")
+  const [addOshiLoading, setAddOshiLoading] = useState(false)
+  const [addOshiError, setAddOshiError] = useState<string | null>(null)
+  const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null)
 
+  // Auth state
   useEffect(() => {
+    const initAuth = async () => {
+      try {
+        setAuthLoading(true)
+        setAuthError(null)
+        const { data, error } = await supabase.auth.getUser()
+        if (error) {
+          if (error.message !== "Auth session missing!") {
+            setAuthError(error.message)
+          }
+          setUser(null)
+        } else {
+          setUser(data.user ?? null)
+        }
+      } finally {
+        setAuthLoading(false)
+      }
+    }
+
+    initAuth()
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null)
+    })
+
+    return () => {
+      subscription.unsubscribe()
+    }
+  }, [])
+
+  // Load data for the signed-in user
+  useEffect(() => {
+    if (!user) {
+      setOshiData([])
+      setStreamEvents([])
+      setStamps({})
+      return
+    }
+
     const loadData = async () => {
       try {
         setLoading(true)
@@ -228,8 +302,8 @@ export default function Oshilog() {
 
         const [{ data: oshiRows, error: oshiError }, { data: scheduleRows, error: scheduleError }, { data: stampRows, error: stampError }] =
           await Promise.all([
-            supabase.from("oshis").select("*"),
-            supabase.from("schedules").select("*"),
+            supabase.from("oshis").select("*").eq("user_id", user.id),
+            supabase.from("schedules").select("*").eq("user_id", user.id),
             supabase.from("stamp_reactions").select("*"),
           ])
 
@@ -305,7 +379,149 @@ export default function Oshilog() {
     }
 
     loadData()
-  }, [])
+  }, [user])
+
+  const handleAuthSubmit = async (mode: "signIn" | "signUp") => {
+    try {
+      setAuthSubmitting(true)
+      setAuthError(null)
+
+      if (!email || !password) {
+        setAuthError("EMAIL & PASSWORD REQUIRED")
+        return
+      }
+
+      if (mode === "signIn") {
+        const { error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        })
+        if (error) throw error
+      } else {
+        const { error } = await supabase.auth.signUp({
+          email,
+          password,
+        })
+        if (error) throw error
+      }
+    } catch (err: any) {
+      setAuthError(err.message ?? "AUTH FAILED")
+    } finally {
+      setAuthSubmitting(false)
+    }
+  }
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut()
+    setUser(null)
+  }
+
+  const handleAddOshi = async () => {
+    console.log("=== SAVE BUTTON CLICKED ===")
+    console.log("=== handleAddOshi START ===")
+    console.log("user:", user)
+    console.log("newOshiName:", newOshiName)
+    console.log("newOshiHandle:", newOshiHandle)
+    console.log("newOshiEmoji:", newOshiEmoji)
+    console.log("newOshiColor:", newOshiColor)
+    
+    if (!user) {
+      console.error("ERROR: No user found")
+      setAddOshiError("USER NOT AUTHENTICATED")
+      return
+    }
+    if (!newOshiName || !newOshiHandle) {
+      console.error("ERROR: Missing required fields")
+      setAddOshiError("NAME & HANDLE REQUIRED")
+      return
+    }
+
+    try {
+      console.log("Starting Supabase insert...")
+      setAddOshiLoading(true)
+      setAddOshiError(null)
+
+      const insertData = {
+        user_id: user.id,
+        name: newOshiName,
+        handle: newOshiHandle,
+        icon: newOshiEmoji,
+        color: newOshiColor,
+      }
+      console.log("Insert data:", insertData)
+
+      const { data, error } = await supabase
+        .from("oshis")
+        .insert(insertData)
+        .select("*")
+        .single()
+
+      console.log("Supabase response:", { data, error })
+
+      if (error) {
+        console.error("Supabase error:", error)
+        throw error
+      }
+      
+      if (data) {
+        console.log("Successfully inserted oshi:", data)
+        const mapped: Oshi = {
+          id: data.id,
+          name: data.name,
+          handle: data.handle,
+          emoji: data.icon ?? "⭐",
+          color: data.color ?? "#FF6B9D",
+          watchHours: data.watch_hours ?? 0,
+          isLive: data.is_live ?? false,
+          birthday: data.birthday ?? undefined,
+          debutDate: data.debut_date ?? undefined,
+          streamCount: data.stream_count ?? 0,
+          eventCount: data.event_count ?? 0,
+          strength: data.strength ?? 0,
+          youtubeChannelId: data.youtube_channel_id ?? null,
+        }
+        console.log("Mapped oshi:", mapped)
+        setOshiData((prev) => [...prev, mapped])
+        setNewOshiName("")
+        setNewOshiHandle("")
+        setNewOshiEmoji("🌙")
+        setNewOshiColor("#FF6B9D")
+        setShowAddOshiForm(false)
+        console.log("=== handleAddOshi SUCCESS ===")
+      }
+    } catch (err: any) {
+      console.error("Add oshi error:", err)
+      const errorMessage = err.message ?? "FAILED TO ADD OSHI"
+      console.error("Setting error message:", errorMessage)
+      setAddOshiError(errorMessage)
+    } finally {
+      setAddOshiLoading(false)
+      console.log("=== handleAddOshi END ===")
+    }
+  }
+
+  const handleDeleteOshi = async (oshiId: number) => {
+    if (!user) return
+    
+    try {
+      const { error } = await supabase
+        .from("oshis")
+        .delete()
+        .eq("id", oshiId)
+        .eq("user_id", user.id)
+
+      if (error) {
+        console.error("Delete error:", error)
+        throw error
+      }
+
+      setOshiData((prev) => prev.filter((o) => o.id !== oshiId))
+      setDeleteConfirm(null)
+    } catch (err: any) {
+      console.error("Delete oshi error:", err)
+      alert("FAILED TO DELETE: " + (err.message ?? "UNKNOWN ERROR"))
+    }
+  }
 
   const handleStamp = useCallback((eventId: number, stampIndex: number) => {
     setStamps(prev => ({
@@ -351,13 +567,22 @@ export default function Oshilog() {
             2025.03.09
           </p>
         </div>
-        <div className="text-right">
-          <p className="text-gba-orange text-[8px]" style={{ fontFamily: "var(--font-pixel)" }}>
-            PLAYER 1
-          </p>
-          <p className="text-gba-text text-[10px]" style={{ fontFamily: "var(--font-pixel)" }}>
-            LV.42
-          </p>
+        <div className="text-right flex flex-col items-end gap-1">
+          <div>
+            <p className="text-gba-orange text-[8px]" style={{ fontFamily: "var(--font-pixel)" }}>
+              PLAYER 1
+            </p>
+            <p className="text-gba-text text-[10px]" style={{ fontFamily: "var(--font-pixel)" }}>
+              LV.42
+            </p>
+          </div>
+          <PixelButton
+            variant="ghost"
+            className="px-2 py-1"
+            onClick={handleSignOut}
+          >
+            LOGOUT
+          </PixelButton>
         </div>
       </div>
 
@@ -557,6 +782,53 @@ export default function Oshilog() {
                 </span>
               </div>
             )}
+            
+            {/* Delete Button */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                setDeleteConfirm(oshi.id)
+              }}
+              className="absolute -top-1 -left-1 bg-red-600 border-2 border-black px-1 py-0.5 text-white text-[6px] hover:bg-red-700 active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0_#000] transition-all"
+              style={{ fontFamily: "var(--font-pixel)" }}
+            >
+              DELETE
+            </button>
+            
+            {/* Delete Confirmation */}
+            {deleteConfirm === oshi.id && (
+              <div className="absolute inset-0 bg-black bg-opacity-80 flex flex-col items-center justify-center z-10 p-2">
+                <p 
+                  className="text-white text-[8px] text-center mb-2"
+                  style={{ fontFamily: "var(--font-pixel)" }}
+                >
+                  REALLY DELETE?
+                </p>
+                <div className="flex gap-1">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleDeleteOshi(oshi.id)
+                    }}
+                    className="bg-red-600 border border-black px-2 py-1 text-white text-[6px] hover:bg-red-700 active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0_#000]"
+                    style={{ fontFamily: "var(--font-pixel)" }}
+                  >
+                    YES
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setDeleteConfirm(null)
+                    }}
+                    className="bg-gba-green border border-black px-2 py-1 text-gba-dark text-[6px] hover:bg-green-600 active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0_#000]"
+                    style={{ fontFamily: "var(--font-pixel)" }}
+                  >
+                    NO
+                  </button>
+                </div>
+              </div>
+            )}
+            
             <div className="text-center">
               <div
                 className="w-14 h-14 flex items-center justify-center text-3xl mx-auto mb-2 border-2 border-black bg-gba-mid"
@@ -577,19 +849,143 @@ export default function Oshilog() {
         ))}
 
         {/* Add Member Card */}
-        <div
-          className="border-2 border-dashed border-gba-orange p-4 flex flex-col items-center justify-center cursor-pointer hover:bg-gba-surface transition-colors min-h-[140px]"
-          onClick={() => {}}
-        >
-          <Plus className="w-8 h-8 text-gba-orange mb-2" />
-          <p 
-            className="text-gba-orange text-[8px]"
-            style={{ fontFamily: "var(--font-pixel)" }}
+        {user && !showAddOshiForm && (
+          <div
+            className="border-2 border-dashed border-gba-orange p-4 flex flex-col items-center justify-center cursor-pointer hover:bg-gba-surface transition-colors min-h-[140px]"
+            onClick={() => setShowAddOshiForm(true)}
           >
-            ADD MEMBER
-          </p>
-        </div>
+            <Plus className="w-8 h-8 text-gba-orange mb-2" />
+            <p 
+              className="text-gba-orange text-[8px]"
+              style={{ fontFamily: "var(--font-pixel)" }}
+            >
+              ADD MEMBER
+            </p>
+          </div>
+        )}
       </div>
+
+      {user && showAddOshiForm && (
+        <PixelCard borderColor="#F5A623" className="mt-4 bg-gba-surface">
+          <SectionHeader>NEW PARTY MEMBER</SectionHeader>
+          <form
+            className="space-y-3"
+            onSubmit={(e) => {
+              e.preventDefault()
+              handleAddOshi()
+            }}
+          >
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label
+                  className="block text-gba-text text-[8px]"
+                  style={{ fontFamily: "var(--font-pixel)" }}
+                >
+                  NAME
+                </label>
+                <input
+                  type="text"
+                  className="w-full px-2 py-1 bg-gba-mid border-2 border-gba-orange text-gba-text text-xs outline-none"
+                  style={{ fontFamily: "var(--font-pixel)" }}
+                  value={newOshiName}
+                  onChange={(e) => setNewOshiName(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-1">
+                <label
+                  className="block text-gba-text text-[8px]"
+                  style={{ fontFamily: "var(--font-pixel)" }}
+                >
+                  HANDLE
+                </label>
+                <input
+                  type="text"
+                  className="w-full px-2 py-1 bg-gba-mid border-2 border-gba-orange text-gba-text text-xs outline-none"
+                  style={{ fontFamily: "var(--font-pixel)" }}
+                  placeholder="@oshi_handle"
+                  value={newOshiHandle}
+                  onChange={(e) => setNewOshiHandle(e.target.value)}
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label
+                  className="block text-gba-text text-[8px]"
+                  style={{ fontFamily: "var(--font-pixel)" }}
+                >
+                  EMOJI
+                </label>
+                <input
+                  type="text"
+                  className="w-full px-2 py-1 bg-gba-mid border-2 border-gba-orange text-gba-text text-xs outline-none"
+                  style={{ fontFamily: "var(--font-pixel)" }}
+                  value={newOshiEmoji}
+                  onChange={(e) => setNewOshiEmoji(e.target.value)}
+                  maxLength={4}
+                />
+              </div>
+              <div className="space-y-1">
+                <label
+                  className="block text-gba-text text-[8px]"
+                  style={{ fontFamily: "var(--font-pixel)" }}
+                >
+                  COLOR
+                </label>
+                <select
+                  className="w-full px-2 py-1 bg-gba-mid border-2 border-gba-orange text-gba-text text-xs outline-none"
+                  style={{ fontFamily: "var(--font-pixel)" }}
+                  value={newOshiColor}
+                  onChange={(e) => setNewOshiColor(e.target.value)}
+                >
+                  {colorOptions.map((color) => (
+                    <option key={color.value} value={color.value}>
+                      {color.name}
+                    </option>
+                  ))}
+                </select>
+                <div 
+                  className="w-full h-4 border border-gba-mid"
+                  style={{ backgroundColor: newOshiColor }}
+                />
+              </div>
+            </div>
+
+            {addOshiError && (
+              <p
+                className="text-red-400 text-[8px]"
+                style={{ fontFamily: "var(--font-pixel)" }}
+              >
+                {addOshiError}
+              </p>
+            )}
+
+            <div className="flex gap-2 pt-1">
+              <PixelButton
+                variant="primary"
+                className="flex-1 py-2"
+                onClick={handleAddOshi}
+                disabled={addOshiLoading}
+              >
+                {addOshiLoading ? "SAVING..." : "▶ SAVE"}
+              </PixelButton>
+              <PixelButton
+                variant="ghost"
+                className="flex-1 py-2"
+                onClick={() => {
+                  setShowAddOshiForm(false)
+                  setAddOshiError(null)
+                }}
+              >
+                CANCEL
+              </PixelButton>
+            </div>
+          </form>
+        </PixelCard>
+      )}
     </div>
   )
 
@@ -707,8 +1103,10 @@ export default function Oshilog() {
               { day: 12, oshi: oshiData[0], event: "ART STREAM", icon: "▶" },
               { day: 15, oshi: oshiData[0], event: "COLLAB", icon: "⚔" },
               { day: 20, oshi: oshiData[2], event: "3D LIVE", icon: "♪" },
-            ].map(({ day, oshi, event, icon }) => (
-              <div key={day} className="flex items-center gap-3 p-2 bg-gba-surface border-l-4" style={{ borderColor: oshi.color }}>
+            ]
+              .filter(({ oshi }) => !!oshi)
+              .map(({ day, oshi, event, icon }) => (
+              <div key={day} className="flex items-center gap-3 p-2 bg-gba-surface border-l-4" style={{ borderColor: oshi!.color }}>
                 <div
                   className="w-8 text-center"
                   style={{ fontFamily: "var(--font-pixel)" }}
@@ -723,7 +1121,7 @@ export default function Oshilog() {
                   >
                     {event}
                   </p>
-                  <p className="text-gba-text-muted text-[8px]">{oshi.name}</p>
+                  <p className="text-gba-text-muted text-[8px]">{oshi!.name}</p>
                 </div>
               </div>
             ))}
@@ -1018,11 +1416,116 @@ export default function Oshilog() {
     </div>
   )
 
+  const renderAuthScreen = () => (
+    <div className="flex-1 w-full max-w-[390px] mx-auto px-4 pt-8 pb-24 flex flex-col items-center justify-start">
+      <PixelCard borderColor="#F5A623" className="w-full max-w-sm bg-gba-surface">
+        <div className="text-center mb-4">
+          <h1
+            className="text-gba-green gba-glow text-lg"
+            style={{ fontFamily: "var(--font-pixel)" }}
+          >
+            OSHILOG
+          </h1>
+          <p
+            className="text-gba-text-muted text-[8px] mt-1"
+            style={{ fontFamily: "var(--font-pixel)" }}
+          >
+            PLAYER LOGIN
+          </p>
+        </div>
+
+        <form
+          className="space-y-3"
+          onSubmit={(e) => {
+            e.preventDefault()
+            handleAuthSubmit(authMode)
+          }}
+        >
+          <div className="space-y-1">
+            <label
+              className="block text-gba-text text-[8px] mb-1"
+              style={{ fontFamily: "var(--font-pixel)" }}
+            >
+              EMAIL
+            </label>
+            <input
+              type="email"
+              className="w-full px-2 py-1 bg-gba-mid border-2 border-gba-orange text-gba-text text-xs outline-none"
+              style={{ fontFamily: "var(--font-pixel)" }}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+          </div>
+          <div className="space-y-1">
+            <label
+              className="block text-gba-text text-[8px] mb-1"
+              style={{ fontFamily: "var(--font-pixel)" }}
+            >
+              PASSWORD
+            </label>
+            <input
+              type="password"
+              className="w-full px-2 py-1 bg-gba-mid border-2 border-gba-orange text-gba-text text-xs outline-none"
+              style={{ fontFamily: "var(--font-pixel)" }}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+          </div>
+
+          {authError && (
+            <p
+              className="text-red-400 text-[8px]"
+              style={{ fontFamily: "var(--font-pixel)" }}
+            >
+              {authError}
+            </p>
+          )}
+
+          <div className="space-y-2 pt-2">
+            <PixelButton
+              className="w-full py-2"
+              variant="primary"
+            >
+              {authSubmitting
+                ? "CONNECTING..."
+                : authMode === "signIn"
+                ? "▶ START"
+                : "▶ REGISTER"}
+            </PixelButton>
+
+            <PixelButton
+              className="w-full py-2"
+              variant="ghost"
+              onClick={() =>
+                setAuthMode((prev) => (prev === "signIn" ? "signUp" : "signIn"))
+              }
+            >
+              {authMode === "signIn"
+                ? "NEW PLAYER? CREATE ACCOUNT"
+                : "HAVE SAVE DATA? LOGIN"}
+            </PixelButton>
+          </div>
+        </form>
+      </PixelCard>
+    </div>
+  )
+
   return (
     <div className="min-h-screen bg-gba-dark pixel-grid scanlines flex flex-col">
       {/* Main Content */}
       <main className="flex-1 w-full max-w-[390px] mx-auto px-4 pt-4 pb-24 overflow-y-auto">
-        {loading ? (
+        {authLoading ? (
+          <p
+            className="text-gba-text text-xs"
+            style={{ fontFamily: "var(--font-pixel)" }}
+          >
+            CHECKING SAVE DATA...
+          </p>
+        ) : !user ? (
+          renderAuthScreen()
+        ) : loading ? (
           <p
             className="text-gba-text text-xs"
             style={{ fontFamily: "var(--font-pixel)" }}
