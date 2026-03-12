@@ -1,10 +1,11 @@
 "use client"
 
 import { useState, useCallback, useEffect } from "react"
-import { Home, Users, Calendar, FileText, ChevronLeft, ChevronRight, Bell, Plus } from "lucide-react"
+import { Home, Users, Calendar, FileText, ChevronLeft, ChevronRight, Bell, Plus, RefreshCw } from "lucide-react"
 import { format } from "date-fns"
 import type { User } from "@supabase/supabase-js"
 import { supabase } from "@/lib/supabase"
+import { youtubeService, type YouTubeVideo } from "@/lib/youtube"
 
 // Types
 interface Oshi {
@@ -251,9 +252,17 @@ export default function Oshilog() {
   const [newOshiHandle, setNewOshiHandle] = useState("")
   const [newOshiEmoji, setNewOshiEmoji] = useState("🌙")
   const [newOshiColor, setNewOshiColor] = useState("#FF6B9D")
+  const [newOshiChannelId, setNewOshiChannelId] = useState("")
   const [addOshiLoading, setAddOshiLoading] = useState(false)
   const [addOshiError, setAddOshiError] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null)
+  const [youtubeVideos, setYoutubeVideos] = useState<Record<number, YouTubeVideo[]>>({})
+  const [youtubeLoading, setYoutubeLoading] = useState<Record<number, boolean>>({})
+  const [youtubeError, setYoutubeError] = useState<Record<number, string>>({})
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null)
+  const [editOshi, setEditOshi] = useState<Oshi | null>(null)
+  const [editOshiLoading, setEditOshiLoading] = useState(false)
+  const [editOshiError, setEditOshiError] = useState<string | null>(null)
 
   // Auth state
   useEffect(() => {
@@ -302,12 +311,284 @@ export default function Oshilog() {
     }
   }, [])
 
+  // Fetch YouTube data for oshis
+  const fetchYouTubeData = async (oshis: Oshi[]) => {
+    const oshisWithChannels = oshis.filter(o => o.youtubeChannelId)
+    
+    for (const oshi of oshisWithChannels) {
+      try {
+        setYoutubeLoading(prev => ({ ...prev, [oshi.id]: true }))
+        setYoutubeError(prev => ({ ...prev, [oshi.id]: '' }))
+        
+        console.log(`Fetching YouTube data for ${oshi.name} (${oshi.youtubeChannelId})`)
+        const videos = await youtubeService.getChannelVideos(oshi.youtubeChannelId!)
+        
+        setYoutubeVideos(prev => ({ ...prev, [oshi.id]: videos }))
+        console.log(`Fetched ${videos.length} videos for ${oshi.name}`)
+      } catch (error) {
+        console.error(`Failed to fetch YouTube data for ${oshi.name}:`, error)
+        setYoutubeError(prev => ({ ...prev, [oshi.id]: 'FAILED TO LOAD YOUTUBE DATA' }))
+      } finally {
+        setYoutubeLoading(prev => ({ ...prev, [oshi.id]: false }))
+      }
+    }
+  }
+
+  // Extract channel ID from YouTube URL (with server-side resolution)
+  const extractChannelId = async (input: string): Promise<string> => {
+    console.log('Extracting channel ID from:', input)
+    
+    // Remove whitespace and handle null/undefined
+    const url = (input || '').trim()
+    if (!url) return ''
+    
+    // Check if it's already a channel ID
+    if (/^UC[\w-]{22}$/.test(url)) {
+      console.log('Input is already a channel ID:', url)
+      return url
+    }
+    
+    // Handle direct channel URL patterns and custom handles
+    const channelPatterns = [
+      // Custom handle: https://www.youtube.com/@username or youtube.com/@username
+      /(?:https?:\/\/)?(?:www\.)?youtube\.com\/@([^/?]+)/,
+      // Channel URL: https://www.youtube.com/channel/UCxxxxxx
+      /(?:https?:\/\/)?(?:www\.)?youtube\.com\/channel\/([\w-]+)/,
+      // Short URL: https://youtu.be/channel/UCxxxxxx
+      /(?:https?:\/\/)?youtu\.be\/channel\/([\w-]+)/,
+    ]
+    
+    for (const pattern of channelPatterns) {
+      const match = url.match(pattern)
+      if (match) {
+        const channelId = match[1]
+        console.log('Extracted from URL:', channelId)
+        
+        // Check if this is a custom handle (contains @ in pattern)
+        if (pattern.source.includes('@')) {
+          // This is a custom handle, need server-side resolution
+          console.log('Custom handle detected, using server resolution for:', channelId)
+          try {
+            const response = await fetch(`/api/resolve-channel?input=${encodeURIComponent(url)}`)
+            
+            if (!response.ok) {
+              console.error('Server resolution failed:', response.status)
+              return url // Fallback to original input
+            }
+            
+            const data = await response.json()
+            console.log('Server resolution result:', data)
+            
+            if (data.error) {
+              console.error('Server resolution error:', data.error)
+              return url // Fallback to original input
+            }
+            
+            const resolvedChannelId = data.channelId
+            console.log('Resolved to channel ID:', resolvedChannelId)
+            return resolvedChannelId
+          } catch (error) {
+            console.error('Channel resolution error:', error)
+            return url // Fallback to original input
+          }
+        } else {
+          // Direct channel ID from URL
+          console.log('Direct channel ID extracted:', channelId)
+          return channelId
+        }
+      }
+    }
+    
+    // If no patterns matched, return original input
+    console.log('No patterns matched, returning original input')
+    return url
+  }
+
+  // Handle YouTube channel input with URL parsing (async)
+  const handleChannelInput = async (value: string, isEdit: boolean = false) => {
+    const channelId = await extractChannelId(value)
+    
+    if (isEdit && editOshi) {
+      setEditOshi({ ...editOshi, youtubeChannelId: channelId })
+    } else {
+      setNewOshiChannelId(channelId)
+    }
+  }
+
+  // Handle date input formatting
+  const handleDateInput = (value: string, type: 'birthday' | 'debut') => {
+    let formatted = value.replace(/\D/g, '') // Remove non-digits
+    
+    if (type === 'birthday') {
+      // Format as MM/DD
+      if (formatted.length >= 3) {
+        formatted = formatted.slice(0, 2) + '/' + formatted.slice(2, 4)
+      }
+      if (formatted.length > 5) {
+        formatted = formatted.slice(0, 5)
+      }
+    } else {
+      // Format as MM/DD/YYYY
+      if (formatted.length >= 3) {
+        formatted = formatted.slice(0, 2) + '/' + formatted.slice(2, 4)
+      }
+      if (formatted.length >= 6) {
+        formatted = formatted.slice(0, 5) + '/' + formatted.slice(4, 8)
+      }
+      if (formatted.length > 10) {
+        formatted = formatted.slice(0, 10)
+      }
+    }
+    
+    return formatted
+  }
+
+  const handleEditOshi = async () => {
+    if (!user || !editOshi) return
+    
+    try {
+      setEditOshiLoading(true)
+      setEditOshiError(null)
+
+      const { data, error } = await supabase
+        .from("oshis")
+        .update({
+          name: editOshi.name,
+          handle: editOshi.handle,
+          icon: editOshi.emoji,
+          color: editOshi.color,
+          youtube_channel_id: editOshi.youtubeChannelId,
+          birthday: editOshi.birthday,
+          debut_date: editOshi.debutDate,
+        })
+        .eq("id", editOshi.id)
+        .eq("user_id", user.id)
+        .select("*")
+        .single()
+
+      if (error) {
+        console.error("Update error:", error)
+        throw error
+      }
+
+      if (data) {
+        // Update local state
+        setOshiData(prev => prev.map(o => 
+          o.id === editOshi.id 
+            ? {
+                ...o,
+                name: data.name,
+                handle: data.handle,
+                emoji: data.icon ?? "⭐",
+                color: data.color ?? "#FF6B9D",
+                youtubeChannelId: data.youtube_channel_id,
+                birthday: data.birthday,
+                debutDate: data.debut_date,
+              }
+            : o
+        ))
+        
+        // Update selected oshi if it's the same
+        if (selectedOshi?.id === editOshi.id) {
+          setSelectedOshi({
+            ...selectedOshi,
+            name: data.name,
+            handle: data.handle,
+            emoji: data.icon ?? "⭐",
+            color: data.color ?? "#FF6B9D",
+            youtubeChannelId: data.youtube_channel_id,
+            birthday: data.birthday,
+            debutDate: data.debut_date,
+          })
+        }
+        
+        setEditOshi(null)
+        console.log("Oshi updated successfully!")
+      }
+    } catch (err: any) {
+      console.error("Edit oshi error:", err)
+      setEditOshiError(err.message ?? "FAILED TO UPDATE OSHI")
+    } finally {
+      setEditOshiLoading(false)
+    }
+  }
+
+  // Get all videos from all oshis with date filtering
+  const getAllVideos = () => {
+    const allVideos: (YouTubeVideo & { oshi: Oshi })[] = []
+    
+    oshiData.forEach(oshi => {
+      const videos = youtubeVideos[oshi.id] || []
+      videos.forEach(video => {
+        allVideos.push({ ...video, oshi })
+      })
+    })
+    
+    return allVideos.sort((a, b) => {
+      // Sort upcoming first, then by date
+      if (a.isUpcoming && !b.isUpcoming) return -1
+      if (!a.isUpcoming && b.isUpcoming) return 1
+      
+      const aDate = new Date(a.scheduledStartTime || a.publishedAt)
+      const bDate = new Date(b.scheduledStartTime || b.publishedAt)
+      return aDate.getTime() - bDate.getTime()
+    })
+  }
+
+  // Get videos for specific date
+  const getVideosForDate = (date: Date) => {
+    const allVideos = getAllVideos()
+    const targetDate = new Date(date)
+    targetDate.setHours(0, 0, 0, 0)
+    const nextDay = new Date(targetDate)
+    nextDay.setDate(nextDay.getDate() + 1)
+    
+    return allVideos.filter(video => {
+      const videoDate = new Date(video.scheduledStartTime || video.publishedAt)
+      return videoDate >= targetDate && videoDate < nextDay
+    })
+  }
+
+  // Get upcoming videos (next 7 days)
+  const getUpcomingVideos = (limit: number = 10) => {
+    const allVideos = getAllVideos()
+    const now = new Date()
+    const nextWeek = new Date(now)
+    nextWeek.setDate(nextWeek.getDate() + 7)
+    
+    return allVideos
+      .filter(video => {
+        const videoDate = new Date(video.scheduledStartTime || video.publishedAt)
+        return videoDate >= now && videoDate <= nextWeek
+      })
+      .slice(0, limit)
+  }
+
+  // Refresh YouTube data for specific oshi
+  const refreshYouTubeData = async (oshiId: number, channelId: string) => {
+    try {
+      setYoutubeLoading(prev => ({ ...prev, [oshiId]: true }))
+      setYoutubeError(prev => ({ ...prev, [oshiId]: '' }))
+      
+      const videos = await youtubeService.getChannelVideos(channelId)
+      setYoutubeVideos(prev => ({ ...prev, [oshiId]: videos }))
+    } catch (error) {
+      console.error('Failed to refresh YouTube data:', error)
+      setYoutubeError(prev => ({ ...prev, [oshiId]: 'FAILED TO REFRESH DATA' }))
+    } finally {
+      setYoutubeLoading(prev => ({ ...prev, [oshiId]: false }))
+    }
+  }
+
   // Load data for the signed-in user
   useEffect(() => {
     if (!user) {
       setOshiData([])
       setStreamEvents([])
       setStamps({})
+      setYoutubeVideos({})
+      setYoutubeLoading({})
+      setYoutubeError({})
       return
     }
 
@@ -387,6 +668,9 @@ export default function Oshilog() {
         setOshiData(mappedOshis)
         setStreamEvents(mappedEvents)
         setStamps(stampMap)
+        
+        // Fetch YouTube data for oshis with channel IDs
+        fetchYouTubeData(mappedOshis)
       } catch (err: any) {
         setError(err.message ?? "Failed to load data")
       } finally {
@@ -520,6 +804,7 @@ export default function Oshilog() {
         handle: newOshiHandle,
         icon: newOshiEmoji,
         color: newOshiColor,
+        youtube_channel_id: newOshiChannelId || null,
       }
       console.log("Insert data:", insertData)
 
@@ -559,6 +844,7 @@ export default function Oshilog() {
         setNewOshiHandle("")
         setNewOshiEmoji("🌙")
         setNewOshiColor("#FF6B9D")
+        setNewOshiChannelId("")
         setShowAddOshiForm(false)
         console.log("=== handleAddOshi SUCCESS ===")
       }
@@ -1027,6 +1313,26 @@ export default function Oshilog() {
               </div>
             </div>
 
+            <div className="space-y-1">
+              <label
+                className="block text-gba-text text-[8px]"
+                style={{ fontFamily: "var(--font-pixel)" }}
+              >
+                YOUTUBE CHANNEL
+              </label>
+              <input
+                type="text"
+                className="w-full px-2 py-1 bg-gba-mid border-2 border-gba-orange text-gba-text text-xs outline-none"
+                style={{ fontFamily: "var(--font-pixel)" }}
+                placeholder="YouTube URL or Channel ID"
+                value={newOshiChannelId}
+                onChange={(e) => handleChannelInput(e.target.value, false)}
+              />
+              <p className="text-gba-text-muted text-[6px]" style={{ fontFamily: "var(--font-pixel)" }}>
+                URL: youtube.com/@username or youtube.com/channel/UCxxxxxx
+              </p>
+            </div>
+
             {addOshiError && (
               <p
                 className="text-red-400 text-[8px]"
@@ -1086,14 +1392,21 @@ export default function Oshilog() {
       calendarDays.push(<div key={`empty-${i}`} className="h-9" />)
     }
     for (let day = 1; day <= daysInMonth; day++) {
+      const currentDate = new Date(year, month, day)
       const isToday = isCurrentMonth && today.getDate() === day
       const eventColor = eventDates[day]
+      const videosForDay = getVideosForDate(currentDate)
+      const hasEvents = videosForDay.length > 0
+      
       calendarDays.push(
         <div
           key={day}
+          onClick={() => setSelectedDate(currentDate)}
           className={`
-            h-9 flex flex-col items-center justify-center relative
-            ${isToday ? "bg-gba-orange text-gba-dark border-2 border-black" : "text-gba-text"}
+            h-9 flex flex-col items-center justify-center relative cursor-pointer
+            transition-all duration-75
+            ${isToday ? "bg-gba-orange text-gba-dark border-2 border-black" : "text-gba-text hover:bg-gba-surface"}
+            ${selectedDate?.getDate() === day && selectedDate?.getMonth() === month ? "ring-2 ring-gba-green" : ""}
           `}
         >
           <span className="text-[10px]" style={{ fontFamily: "var(--font-pixel)" }}>{day}</span>
@@ -1102,6 +1415,9 @@ export default function Oshilog() {
               className="absolute bottom-1 w-2 h-2"
               style={{ backgroundColor: eventColor }}
             />
+          )}
+          {hasEvents && (
+            <div className="absolute top-0 right-0 w-2 h-2 bg-gba-green rounded-full" />
           )}
           {day === 9 && (
             <span className="absolute -top-1 -right-0 text-[8px]">🎂</span>
@@ -1166,38 +1482,158 @@ export default function Oshilog() {
           </div>
         </PixelCard>
 
-        {/* Quest Log */}
+      {/* Selected Date Details */}
+        {selectedDate && (
+          <PixelCard borderColor="#7BC67E">
+            <div className="flex items-center justify-between mb-3">
+              <SectionHeader>
+                {selectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).toUpperCase()}
+              </SectionHeader>
+              <button
+                onClick={() => setSelectedDate(null)}
+                className="text-gba-orange text-[8px] hover:text-gba-green transition-colors"
+                style={{ fontFamily: "var(--font-pixel)" }}
+              >
+                ✕ CLOSE
+              </button>
+            </div>
+            
+            <div className="space-y-2">
+              {(() => {
+                const videosForDate = getVideosForDate(selectedDate)
+                if (videosForDate.length === 0) {
+                  return (
+                    <div className="text-center py-4">
+                      <p className="text-gba-text-muted text-[8px]" style={{ fontFamily: "var(--font-pixel)" }}>
+                        NO SCHEDULES FOR THIS DAY
+                      </p>
+                    </div>
+                  )
+                }
+                
+                return videosForDate.map(video => {
+                  const videoDate = new Date(video.scheduledStartTime || video.publishedAt)
+                  const youtubeUrl = `https://www.youtube.com/watch?v=${video.id}`
+                  
+                  return (
+                    <div 
+                      key={video.id} 
+                      className="flex items-center gap-3 p-2 bg-gba-surface border-l-2" 
+                      style={{ borderColor: video.oshi.color }}
+                    >
+                      <div className="text-center min-w-[60px]">
+                        <p className="text-gba-orange text-[8px]" style={{ fontFamily: "var(--font-pixel)" }}>
+                          {videoDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}
+                        </p>
+                        {video.isLive && (
+                          <span className="bg-red-600 text-white text-[6px] px-1 animate-blink" style={{ fontFamily: "var(--font-pixel)" }}>
+                            LIVE
+                          </span>
+                        )}
+                        {video.isUpcoming && (
+                          <span className="bg-gba-orange text-gba-dark text-[6px] px-1" style={{ fontFamily: "var(--font-pixel)" }}>
+                            UPCOMING
+                          </span>
+                        )}
+                      </div>
+                      
+                      <span className="text-lg">{video.oshi.emoji}</span>
+                      
+                      <div className="flex-1 min-w-0">
+                        <p 
+                          className="text-gba-text text-[10px] truncate mb-1"
+                          style={{ fontFamily: "var(--font-pixel)" }}
+                        >
+                          {video.title}
+                        </p>
+                        <p className="text-gba-text-muted text-[8px]">{video.oshi.name}</p>
+                      </div>
+                      
+                      <a
+                        href={youtubeUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="bg-gba-mid border-2 border-gba-orange px-2 py-1 text-gba-orange text-[8px] hover:bg-gba-surface active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0_#000] transition-all"
+                        style={{ fontFamily: "var(--font-pixel)" }}
+                      >
+                        YOUTUBE
+                      </a>
+                    </div>
+                  )
+                })
+              })()}
+            </div>
+          </PixelCard>
+        )}
+
+      {/* Quest Log - Enhanced with YouTube data */}
         <section>
           <SectionHeader>QUEST LOG</SectionHeader>
           <div className="space-y-2">
-            {[
-              { day: 9, oshi: oshiData[1], event: "BIRTHDAY", icon: "🎂" },
-              { day: 11, oshi: oshiData[3], event: "MORNING TALK", icon: "♪" },
-              { day: 12, oshi: oshiData[0], event: "ART STREAM", icon: "▶" },
-              { day: 15, oshi: oshiData[0], event: "COLLAB", icon: "⚔" },
-              { day: 20, oshi: oshiData[2], event: "3D LIVE", icon: "♪" },
-            ]
-              .filter(({ oshi }) => !!oshi)
-              .map(({ day, oshi, event, icon }) => (
-              <div key={day} className="flex items-center gap-3 p-2 bg-gba-surface border-l-4" style={{ borderColor: oshi!.color }}>
-                <div
-                  className="w-8 text-center"
-                  style={{ fontFamily: "var(--font-pixel)" }}
-                >
-                  <span className="text-gba-orange text-[8px]">3/{day}</span>
-                </div>
-                <span className="text-sm">{icon}</span>
-                <div className="flex-1">
-                  <p 
-                    className="text-gba-text text-[10px]"
-                    style={{ fontFamily: "var(--font-pixel)" }}
-                  >
-                    {event}
-                  </p>
-                  <p className="text-gba-text-muted text-[8px]">{oshi!.name}</p>
-                </div>
+            {(() => {
+              const upcomingVideos = getUpcomingVideos(10)
+              if (upcomingVideos.length === 0) {
+                return (
+                  <div className="text-center py-8">
+                    <p className="text-gba-text-muted text-[8px]" style={{ fontFamily: "var(--font-pixel)" }}>
+                      ADD YOUTUBE CHANNEL IDS TO SEE STREAM SCHEDULES
+                    </p>
+                  </div>
+                )
+              }
+              
+              return upcomingVideos.map(video => {
+                const videoDate = new Date(video.scheduledStartTime || video.publishedAt)
+                const formattedDate = videoDate.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })
+                const formattedTime = videoDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+                
+                return (
+                  <div key={video.id} className="flex items-center gap-3 p-2 bg-gba-surface border-l-4" style={{ borderColor: video.oshi.color }}>
+                    <div
+                      className="w-16 text-center"
+                      style={{ fontFamily: "var(--font-pixel)" }}
+                    >
+                      <span className="text-gba-orange text-[8px]">{formattedDate}</span>
+                      <span className="text-gba-text-muted text-[6px] block">{formattedTime}</span>
+                    </div>
+                    <span className="text-lg">{video.oshi.emoji}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-gba-orange">{getEventIcon(youtubeService.convertToStreamEvent(video, video.oshi.id).type)}</span>
+                        {video.isLive && (
+                          <span className="bg-red-600 text-white text-[6px] px-1 animate-blink" style={{ fontFamily: "var(--font-pixel)" }}>
+                            LIVE
+                          </span>
+                        )}
+                        {video.isUpcoming && (
+                          <span className="bg-gba-orange text-gba-dark text-[6px] px-1" style={{ fontFamily: "var(--font-pixel)" }}>
+                            UPCOMING
+                          </span>
+                        )}
+                      </div>
+                      <p 
+                        className="text-gba-text text-[10px] truncate"
+                        style={{ fontFamily: "var(--font-pixel)" }}
+                      >
+                        {video.title}
+                      </p>
+                      <p className="text-gba-text-muted text-[8px]">{video.oshi.name}</p>
+                    </div>
+                    {youtubeLoading[video.oshi.id] && (
+                      <RefreshCw className="w-4 h-4 text-gba-orange animate-spin" />
+                    )}
+                  </div>
+                )
+              })
+            })()}
+            
+            {Object.values(youtubeError).some(error => error) && (
+              <div className="text-center py-4">
+                <p className="text-red-400 text-[8px]" style={{ fontFamily: "var(--font-pixel)" }}>
+                  FAILED TO LOAD YOUTUBE DATA
+                </p>
               </div>
-            ))}
+            )}
           </div>
         </section>
       </div>
@@ -1432,6 +1868,227 @@ export default function Oshilog() {
         ENABLE ALERTS
       </PixelButton>
 
+      {/* Edit Button */}
+      <PixelButton 
+        className="w-full" 
+        variant="secondary" 
+        onClick={() => setEditOshi(selectedOshi)}
+      >
+        EDIT CHARACTER
+      </PixelButton>
+
+      {/* Edit Form */}
+      {editOshi && (
+        <PixelCard borderColor="#F5A623" className="bg-gba-surface">
+          <SectionHeader>EDIT CHARACTER</SectionHeader>
+          <form
+            className="space-y-3"
+            onSubmit={(e) => {
+              e.preventDefault()
+              handleEditOshi()
+            }}
+          >
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label
+                  className="block text-gba-text text-[8px]"
+                  style={{ fontFamily: "var(--font-pixel)" }}
+                >
+                  NAME
+                </label>
+                <input
+                  type="text"
+                  className="w-full px-2 py-1 bg-gba-mid border-2 border-gba-orange text-gba-text text-xs outline-none"
+                  style={{ fontFamily: "var(--font-pixel)" }}
+                  value={editOshi.name}
+                  onChange={(e) => setEditOshi({ ...editOshi, name: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="space-y-1">
+                <label
+                  className="block text-gba-text text-[8px]"
+                  style={{ fontFamily: "var(--font-pixel)" }}
+                >
+                  HANDLE
+                </label>
+                <input
+                  type="text"
+                  className="w-full px-2 py-1 bg-gba-mid border-2 border-gba-orange text-gba-text text-xs outline-none"
+                  style={{ fontFamily: "var(--font-pixel)" }}
+                  value={editOshi.handle}
+                  onChange={(e) => setEditOshi({ ...editOshi, handle: e.target.value })}
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label
+                  className="block text-gba-text text-[8px]"
+                  style={{ fontFamily: "var(--font-pixel)" }}
+                >
+                  EMOJI
+                </label>
+                <input
+                  type="text"
+                  className="w-full px-2 py-1 bg-gba-mid border-2 border-gba-orange text-gba-text text-xs outline-none"
+                  style={{ fontFamily: "var(--font-pixel)" }}
+                  value={editOshi.emoji}
+                  onChange={(e) => setEditOshi({ ...editOshi, emoji: e.target.value })}
+                  maxLength={4}
+                />
+              </div>
+              <div className="space-y-1">
+                <label
+                  className="block text-gba-text text-[8px]"
+                  style={{ fontFamily: "var(--font-pixel)" }}
+                >
+                  COLOR
+                </label>
+                <select
+                  className="w-full px-2 py-1 bg-gba-mid border-2 border-gba-orange text-gba-text text-xs outline-none"
+                  style={{ fontFamily: "var(--font-pixel)" }}
+                  value={editOshi.color}
+                  onChange={(e) => setEditOshi({ ...editOshi, color: e.target.value })}
+                >
+                  {colorOptions.map((color) => (
+                    <option key={color.value} value={color.value}>
+                      {color.name}
+                    </option>
+                  ))}
+                </select>
+                <div 
+                  className="w-full h-4 border border-gba-mid"
+                  style={{ backgroundColor: editOshi.color }}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label
+                className="block text-gba-text text-[8px]"
+                style={{ fontFamily: "var(--font-pixel)" }}
+              >
+                YOUTUBE CHANNEL
+              </label>
+              <input
+                type="text"
+                className="w-full px-2 py-1 bg-gba-mid border-2 border-gba-orange text-gba-text text-xs outline-none"
+                style={{ fontFamily: "var(--font-pixel)" }}
+                placeholder="YouTube URL or Channel ID"
+                value={editOshi.youtubeChannelId || ""}
+                onChange={(e) => handleChannelInput(e.target.value, true)}
+              />
+              <p className="text-gba-text-muted text-[6px]" style={{ fontFamily: "var(--font-pixel)" }}>
+                URL: youtube.com/@username or youtube.com/channel/UCxxxxxx
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label
+                  className="block text-gba-text text-[8px]"
+                  style={{ fontFamily: "var(--font-pixel)" }}
+                >
+                  BIRTHDAY
+                </label>
+                <input
+                  type="text"
+                  className="w-full px-2 py-1 bg-gba-mid border-2 border-gba-orange text-gba-text text-xs outline-none"
+                  style={{ fontFamily: "var(--font-pixel)" }}
+                  placeholder="MM/DD"
+                  value={editOshi.birthday || ""}
+                  onChange={(e) => setEditOshi({ ...editOshi, birthday: handleDateInput(e.target.value, 'birthday') })}
+                  maxLength={5}
+                />
+              </div>
+              <div className="space-y-1">
+                <label
+                  className="block text-gba-text text-[8px]"
+                  style={{ fontFamily: "var(--font-pixel)" }}
+                >
+                  DEBUT DATE
+                </label>
+                <input
+                  type="text"
+                  className="w-full px-2 py-1 bg-gba-mid border-2 border-gba-orange text-gba-text text-xs outline-none"
+                  style={{ fontFamily: "var(--font-pixel)" }}
+                  placeholder="MM/DD/YYYY"
+                  value={editOshi.debutDate || ""}
+                  onChange={(e) => setEditOshi({ ...editOshi, debutDate: handleDateInput(e.target.value, 'debut') })}
+                  maxLength={10}
+                />
+              </div>
+            </div>
+
+            {editOshiError && (
+              <p
+                className="text-red-400 text-[8px]"
+                style={{ fontFamily: "var(--font-pixel)" }}
+              >
+                {editOshiError}
+              </p>
+            )}
+
+            <div className="flex gap-2 pt-1">
+              <PixelButton
+                variant="primary"
+                className="flex-1 py-2"
+                type="submit"
+                disabled={editOshiLoading}
+              >
+                {editOshiLoading ? "SAVING..." : "▶ SAVE"}
+              </PixelButton>
+              <PixelButton
+                variant="ghost"
+                className="flex-1 py-2"
+                onClick={() => {
+                  setEditOshi(null)
+                  setEditOshiError(null)
+                }}
+              >
+                CANCEL
+              </PixelButton>
+            </div>
+          </form>
+        </PixelCard>
+      )}
+
+      {/* YouTube Channel Info */}
+      {oshi.youtubeChannelId && (
+        <PixelCard borderColor={oshi.color}>
+          <SectionHeader>YOUTUBE CHANNEL</SectionHeader>
+          <div className="flex items-center gap-3">
+            <div className="flex-1">
+              <p 
+                className="text-gba-text text-[10px]"
+                style={{ fontFamily: "var(--font-pixel)" }}
+              >
+                CHANNEL ID: {oshi.youtubeChannelId}
+              </p>
+              {youtubeError[oshi.id] && (
+                <p className="text-red-400 text-[8px]" style={{ fontFamily: "var(--font-pixel)" }}>
+                  {youtubeError[oshi.id]}
+                </p>
+              )}
+            </div>
+            <button
+              onClick={() => refreshYouTubeData(oshi.id, oshi.youtubeChannelId!)}
+              className="bg-gba-mid border-2 border-gba-orange p-2 hover:bg-gba-surface active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0_#000] transition-all"
+              disabled={youtubeLoading[oshi.id]}
+            >
+              {youtubeLoading[oshi.id] ? (
+                <RefreshCw className="w-4 h-4 text-gba-orange animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4 text-gba-orange" />
+              )}
+            </button>
+          </div>
+        </PixelCard>
+      )}
+
       {/* Important Dates */}
       <PixelCard borderColor={oshi.color}>
         <SectionHeader>IMPORTANT DATES</SectionHeader>
@@ -1457,33 +2114,111 @@ export default function Oshilog() {
         </div>
       </PixelCard>
 
-      {/* Quest Log */}
+      {/* Quest Log - Enhanced with YouTube data */}
       <section>
-        <SectionHeader>QUEST LOG</SectionHeader>
-        <div className="space-y-2">
-          {streamEvents
-            .filter(e => e.oshiId === oshi.id)
-            .map(event => (
-              <PixelCard key={event.id} borderColor={oshi.color}>
-                <div className="flex items-center gap-3">
-                  <div className="text-center">
-                    <p className="text-gba-text-muted text-[8px]" style={{ fontFamily: "var(--font-pixel)" }}>
-                      {event.date}
-                    </p>
-                    <p 
-                      className="text-sm"
-                      style={{ fontFamily: "var(--font-pixel)", color: oshi.color }}
+        <SectionHeader>RECENT VIDEOS</SectionHeader>
+        <div className="space-y-3">
+          {youtubeVideos[oshi.id]?.slice(0, 5).map(video => {
+            const videoDate = new Date(video.scheduledStartTime || video.publishedAt)
+            const youtubeUrl = `https://www.youtube.com/watch?v=${video.id}`
+            
+            return (
+              <PixelCard key={video.id} borderColor={oshi.color} className="overflow-hidden">
+                <div className="flex gap-3">
+                  {/* Thumbnail */}
+                  <div className="relative w-20 h-14 flex-shrink-0">
+                    <img 
+                      src={video.thumbnailUrl} 
+                      alt={video.title}
+                      className="w-full h-full object-cover border-2 border-black"
+                      onError={(e) => {
+                        // Fallback to solid color if thumbnail fails
+                        const target = e.target as HTMLImageElement
+                        target.style.display = 'none'
+                        const fallback = target.nextElementSibling as HTMLDivElement
+                        if (fallback) fallback.style.display = 'flex'
+                      }}
+                    />
+                    <div 
+                      className="w-full h-full bg-gba-mid border-2 border-black flex items-center justify-center hidden"
+                      style={{ display: 'none' }}
                     >
-                      {event.time}
-                    </p>
+                      <span className="text-2xl">{oshi.emoji}</span>
+                    </div>
+                    {video.isLive && (
+                      <div className="absolute top-0 left-0 bg-red-600 text-white text-[6px] px-1 animate-blink" style={{ fontFamily: "var(--font-pixel)" }}>
+                        LIVE
+                      </div>
+                    )}
+                    {video.isUpcoming && (
+                      <div className="absolute top-0 left-0 bg-gba-orange text-gba-dark text-[6px] px-1" style={{ fontFamily: "var(--font-pixel)" }}>
+                        UPCOMING
+                      </div>
+                    )}
                   </div>
-                  <span className="text-gba-orange">{getEventIcon(event.type)}</span>
-                  <p className="text-gba-text text-[10px]" style={{ fontFamily: "var(--font-pixel)" }}>
-                    {event.title}
-                  </p>
+                  
+                  {/* Video Info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-2 mb-1">
+                      <div className="flex-1 min-w-0">
+                        <p 
+                          className="text-gba-text text-[10px] line-clamp-2 mb-1"
+                          style={{ fontFamily: "var(--font-pixel)" }}
+                        >
+                          {video.title}
+                        </p>
+                        <p className="text-gba-text-muted text-[8px]" style={{ fontFamily: "var(--font-pixel)" }}>
+                          {videoDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} • {videoDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}
+                        </p>
+                      </div>
+                      
+                      <a
+                        href={youtubeUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="bg-gba-mid border-2 border-gba-orange px-2 py-1 text-gba-orange text-[6px] hover:bg-gba-surface active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0_#000] transition-all flex-shrink-0"
+                        style={{ fontFamily: "var(--font-pixel)" }}
+                      >
+                        WATCH
+                      </a>
+                    </div>
+                  </div>
                 </div>
               </PixelCard>
-            ))}
+            )
+          })}
+          
+          {oshi.youtubeChannelId && !youtubeVideos[oshi.id] && !youtubeLoading[oshi.id] && (
+            <div className="text-center py-8">
+              <p className="text-gba-text-muted text-[8px]" style={{ fontFamily: "var(--font-pixel)" }}>
+                NO VIDEOS FOUND
+              </p>
+              <button
+                onClick={() => refreshYouTubeData(oshi.id, oshi.youtubeChannelId!)}
+                className="mt-2 text-gba-orange text-[8px] hover:text-gba-green transition-colors"
+                style={{ fontFamily: "var(--font-pixel)" }}
+              >
+                REFRESH
+              </button>
+            </div>
+          )}
+          
+          {youtubeLoading[oshi.id] && (
+            <div className="text-center py-8">
+              <RefreshCw className="w-6 h-6 text-gba-orange animate-spin mx-auto mb-2" />
+              <p className="text-gba-text-muted text-[8px]" style={{ fontFamily: "var(--font-pixel)" }}>
+                LOADING VIDEOS...
+              </p>
+            </div>
+          )}
+          
+          {!oshi.youtubeChannelId && (
+            <div className="text-center py-8">
+              <p className="text-gba-text-muted text-[8px]" style={{ fontFamily: "var(--font-pixel)" }}>
+                ADD YOUTUBE CHANNEL ID TO SEE VIDEOS
+              </p>
+            </div>
+          )}
         </div>
       </section>
     </div>
