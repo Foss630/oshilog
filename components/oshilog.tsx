@@ -280,7 +280,21 @@ export default function Oshilog() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null)
+      console.log("=== AUTH STATE CHANGED ===")
+      console.log("Event:", _event)
+      console.log("Session exists:", !!session)
+      console.log("User ID:", session?.user?.id)
+      console.log("User email:", session?.user?.email)
+      
+      const newUser = session?.user ?? null
+      console.log("Setting user state to:", newUser)
+      setUser(newUser)
+      
+      if (newUser) {
+        console.log("User is now logged in, should redirect to home")
+      } else {
+        console.log("User is now logged out")
+      }
     })
 
     return () => {
@@ -401,13 +415,30 @@ export default function Oshilog() {
 
       if (mode === "signIn") {
         console.log("Attempting sign in...")
+        console.log("Email:", email)
+        console.log("Password length:", password.length)
+        
         const { data, error } = await supabase.auth.signInWithPassword({
           email,
           password,
         })
+        
         console.log("Sign in response:", { data, error })
-        if (error) throw error
-        console.log("Sign in successful!")
+        console.log("User data:", data.user)
+        console.log("Session data:", data.session)
+        
+        if (error) {
+          console.error("Sign in error:", error)
+          throw error
+        }
+        
+        if (data.user && data.session) {
+          console.log("Sign in successful! User ID:", data.user.id)
+          console.log("Session expires at:", data.session.expires_at)
+        } else {
+          console.error("Sign in succeeded but no user/session data")
+          throw new Error("LOGIN FAILED: NO SESSION DATA")
+        }
       } else {
         console.log("Attempting sign up...")
         const { data, error } = await supabase.auth.signUp({
@@ -1481,6 +1512,10 @@ export default function Oshilog() {
           onSubmit={(e) => {
             e.preventDefault()
             console.log("=== FORM SUBMITTED ===")
+            console.log("Current authMode:", authMode)
+            console.log("Email value:", email)
+            console.log("Password exists:", password.length > 0)
+            console.log("Form should submit...")
             handleAuthSubmit(authMode)
           }}
         >
@@ -1532,6 +1567,10 @@ export default function Oshilog() {
               variant="primary"
               type="submit"
               disabled={authSubmitting}
+              onClick={() => {
+                console.log("=== BUTTON CLICKED ===")
+                console.log("Auth mode:", authMode)
+              }}
             >
               {authSubmitting
                 ? "CONNECTING..."
