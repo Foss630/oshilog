@@ -6,6 +6,8 @@ import { format } from "date-fns"
 import type { User } from "@supabase/supabase-js"
 import { supabase } from "@/lib/supabase"
 import { youtubeService, type YouTubeVideo } from "@/lib/youtube"
+import { OshiMemoComponent } from "./OshiMemoComponent"
+import { OshiStatsComponent } from "./OshiStatsComponent"
 
 // Types
 interface Oshi {
@@ -1642,140 +1644,17 @@ export default function Oshilog() {
 
   // REPORT SCREEN - Monthly Results
   const renderReport = () => {
-    const totalHours = oshiData.reduce((sum, o) => sum + o.watchHours, 0)
-    const topOshi = oshiData.reduce((top, o) => o.watchHours > top.watchHours ? o : top, oshiData[0])
-    
-    const stampRanking = [
-      { emoji: "💖", count: 234 },
-      { emoji: "🔥", count: 189 },
-      { emoji: "😭", count: 156 },
-      { emoji: "✨", count: 142 },
-      { emoji: "👏", count: 98 },
-    ]
-
     return (
       <div className="space-y-5">
-        <h1 
-          className="text-gba-green gba-glow"
-          style={{ fontFamily: "var(--font-pixel)", fontSize: "14px" }}
-        >
-          MONTHLY RESULTS
-        </h1>
-
-        {/* Hero Stats Card */}
-        <PixelCard borderColor="#F5A623" className="bg-gba-surface">
-          <p 
-            className="text-gba-orange text-[10px] text-center mb-2"
-            style={{ fontFamily: "var(--font-pixel)" }}
-          >
-            FEB 2025 REPORT
-          </p>
-          <p className="text-gba-text-muted text-[8px] text-center" style={{ fontFamily: "var(--font-pixel)" }}>
-            TOTAL WATCH TIME
-          </p>
-          <p 
-            className="text-gba-green gba-glow text-center text-4xl my-2"
-            style={{ fontFamily: "var(--font-pixel)" }}
-          >
-            {totalHours}
-            <span className="text-sm ml-1">HRS</span>
-          </p>
-          <div className="text-center">
-            <span 
-              className="text-gba-orange text-[10px] animate-blink"
-              style={{ fontFamily: "var(--font-pixel)" }}
-            >
-              ★★★ DIAMOND RANK ★★★
-            </span>
+        {user ? (
+          <OshiStatsComponent userId={user.id} oshiData={oshiData} />
+        ) : (
+          <div className="text-center py-8">
+            <p className="text-gba-text-muted font-pixel text-xs">
+              LOGIN TO VIEW STATS
+            </p>
           </div>
-        </PixelCard>
-
-        {/* Stats Grid */}
-        <div className="grid grid-cols-2 gap-3">
-          <PixelCard borderColor={topOshi.color}>
-            <p className="text-gba-text-muted text-[8px]" style={{ fontFamily: "var(--font-pixel)" }}>
-              MVP STREAMER
-            </p>
-            <div className="flex items-center gap-2 mt-2">
-              <span className="text-2xl">{topOshi.emoji}</span>
-              <div>
-                <p className="text-gba-text text-[10px]" style={{ fontFamily: "var(--font-pixel)" }}>
-                  {topOshi.name}
-                </p>
-                <p className="text-gba-text-muted text-[8px]">{topOshi.watchHours}H</p>
-              </div>
-            </div>
-          </PixelCard>
-
-          <PixelCard borderColor="#FFD93D">
-            <p className="text-gba-text-muted text-[8px]" style={{ fontFamily: "var(--font-pixel)" }}>
-              STREAK
-            </p>
-            <p 
-              className="text-gba-green text-xl mt-2 gba-glow"
-              style={{ fontFamily: "var(--font-pixel)" }}
-            >
-              18
-              <span className="text-[10px] ml-1">DAYS</span>
-            </p>
-            <p className="text-gba-orange text-[8px]" style={{ fontFamily: "var(--font-pixel)" }}>
-              NEW RECORD!
-            </p>
-          </PixelCard>
-
-          <PixelCard borderColor="#5B8DD9" className="col-span-2">
-            <p className="text-gba-text-muted text-[8px]" style={{ fontFamily: "var(--font-pixel)" }}>
-              TOP STREAM
-            </p>
-            <div className="flex items-center gap-3 mt-2">
-              <div className="w-10 h-10 flex items-center justify-center text-xl border-2 border-black bg-gba-mid">
-                {topOshi.emoji}
-              </div>
-              <div>
-                <p className="text-gba-text text-[10px]" style={{ fontFamily: "var(--font-pixel)" }}>
-                  3D DEBUT STREAM
-                </p>
-                <p className="text-gba-text-muted text-[8px]">3H 42M WATCHED</p>
-              </div>
-            </div>
-          </PixelCard>
-        </div>
-
-        {/* Reaction Log */}
-        <PixelCard borderColor="#F5A623">
-          <SectionHeader>REACTION LOG</SectionHeader>
-          <div className="space-y-2">
-            {stampRanking.map((stamp, idx) => (
-              <div key={stamp.emoji} className="flex items-center gap-2">
-                <span 
-                  className="w-4 text-center text-gba-text-muted text-[8px]"
-                  style={{ fontFamily: "var(--font-pixel)" }}
-                >
-                  {idx + 1}
-                </span>
-                <span className="text-lg">{stamp.emoji}</span>
-                <div className="flex-1">
-                  <HPBar 
-                    value={stamp.count} 
-                    max={stampRanking[0].count} 
-                    color="#7BC67E"
-                  />
-                </div>
-                <span 
-                  className="text-gba-text text-[10px] w-8 text-right"
-                  style={{ fontFamily: "var(--font-pixel)" }}
-                >
-                  {stamp.count}
-                </span>
-              </div>
-            ))}
-          </div>
-        </PixelCard>
-
-        {/* Share Button */}
-        <PixelButton className="w-full py-3" variant="primary">
-          ▶ SHARE RESULTS
-        </PixelButton>
+        )}
       </div>
     )
   }
@@ -2221,6 +2100,14 @@ export default function Oshilog() {
           )}
         </div>
       </section>
+
+      {/* Oshi Memo Section */}
+      {user && (
+        <OshiMemoComponent 
+          oshiId={oshi.id.toString()} 
+          userId={user.id} 
+        />
+      )}
     </div>
   )
 
