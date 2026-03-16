@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabase"
 import { youtubeService, type YouTubeVideo } from "@/lib/youtube"
 import { OshiMemoComponent } from "./OshiMemoComponent"
 import { OshiStatsComponent } from "./OshiStatsComponent"
+import { OshiMemo, categoryConfig } from "./OshiMemo"
 
 // Types
 interface Oshi {
@@ -265,6 +266,18 @@ export default function Oshilog() {
   const [editOshi, setEditOshi] = useState<Oshi | null>(null)
   const [editOshiLoading, setEditOshiLoading] = useState(false)
   const [editOshiError, setEditOshiError] = useState<string | null>(null)
+  
+  // Memo state
+  const [showAddMemo, setShowAddMemo] = useState(false)
+  const [memos, setMemos] = useState<any[]>([])
+  const [memoLoading, setMemoLoading] = useState(false)
+  const [newMemo, setNewMemo] = useState({
+    category: 'GOODS' as const,
+    title: '',
+    amount: '',
+    memo_date: new Date().toISOString().split('T')[0],
+    note: ''
+  })
 
   // Auth state
   useEffect(() => {
@@ -281,6 +294,8 @@ export default function Oshilog() {
         } else {
           setUser(data.user ?? null)
         }
+      } catch (err) {
+        console.error('Auth error:', err)
       } finally {
         setAuthLoading(false)
       }
@@ -514,6 +529,95 @@ export default function Oshilog() {
       setEditOshiLoading(false)
     }
   }
+
+  // Memo handlers
+  const handleAddMemo = async () => {
+    if (!user || !selectedOshi || !newMemo.title.trim()) return
+
+    setMemoLoading(true)
+    try {
+      const { error } = await supabase
+        .from('oshi_memos')
+        .insert({
+          user_id: user.id,
+          oshi_id: selectedOshi.id.toString(),
+          category: newMemo.category,
+          title: newMemo.title.trim(),
+          amount: newMemo.amount ? parseInt(newMemo.amount) : null,
+          memo_date: newMemo.memo_date,
+          note: newMemo.note.trim() || null
+        })
+
+      if (error) throw error
+
+      // Reset form
+      setNewMemo({
+        category: 'GOODS' as const,
+        title: '',
+        amount: '',
+        memo_date: new Date().toISOString().split('T')[0],
+        note: ''
+      })
+      setShowAddMemo(false)
+      
+      // Reload memos
+      loadMemos()
+    } catch (error) {
+      console.error('Error adding memo:', error)
+    } finally {
+      setMemoLoading(false)
+    }
+  }
+
+  const handleDeleteMemo = async (memoId: string) => {
+    if (!user) return
+
+    setMemoLoading(true)
+    try {
+      const { error } = await supabase
+        .from('oshi_memos')
+        .delete()
+        .eq('id', memoId)
+        .eq('user_id', user.id)
+
+      if (error) throw error
+
+      // Reload memos
+      loadMemos()
+    } catch (error) {
+      console.error('Error deleting memo:', error)
+    } finally {
+      setMemoLoading(false)
+    }
+  }
+
+  const loadMemos = async () => {
+    if (!user || !selectedOshi) return
+
+    try {
+      const { data, error } = await supabase
+        .from('oshi_memos')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('oshi_id', selectedOshi.id.toString())
+        .order('memo_date', { ascending: false })
+
+      if (error) throw error
+      setMemos(data || [])
+    } catch (error) {
+      console.error('Error loading memos:', error)
+      setMemos([])
+    }
+  }
+
+  // Load memos when selectedOshi changes
+  useEffect(() => {
+    if (selectedOshi && user) {
+      loadMemos()
+    } else {
+      setMemos([])
+    }
+  }, [selectedOshi, user])
 
   // Get all videos from all oshis with date filtering
   const getAllVideos = () => {
@@ -1660,7 +1764,9 @@ export default function Oshilog() {
   }
 
   // OSHI DETAIL SCREEN - Character Status
-  const renderOshiDetail = (oshi: Oshi) => (
+  const renderOshiDetail = (oshi: Oshi) => {
+    console.log('renderOshiDetail called - user:', user, 'oshi:', oshi);
+    return (
     <div className="space-y-5">
       {/* Back Button */}
       <button
@@ -2101,15 +2207,23 @@ export default function Oshilog() {
         </div>
       </section>
 
-      {/* Oshi Memo Section */}
-      {user && (
-        <OshiMemoComponent 
-          oshiId={oshi.id.toString()} 
-          userId={user.id} 
-        />
-      )}
+      {/* OSHI MEMO */}
+      <div className="mt-4">
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-gba-orange text-xs" style={{ fontFamily: "var(--font-pixel)" }}>▶ OSHI MEMO</span>
+          <div className="flex-1 h-px bg-gba-orange opacity-30" />
+        </div>
+        <button
+          onClick={() => setShowAddMemo(!showAddMemo)}
+          className="w-full border-2 border-gba-orange text-gba-orange text-xs py-2 mb-3"
+          style={{ fontFamily: "var(--font-pixel)" }}
+        >
+          + ADD MEMO
+        </button>
+      </div>
     </div>
-  )
+    )
+  }
 
   const renderAuthScreen = () => (
     <div className="flex-1 w-full max-w-[390px] mx-auto px-4 pt-8 pb-24 flex flex-col items-center justify-start">
